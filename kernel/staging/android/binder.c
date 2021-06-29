@@ -1387,6 +1387,7 @@ static void binder_transaction(struct binder_proc *proc,
 			}
 			target_node = ref->node;
 		} else {
+			//service manager 的 binder node
 			target_node = binder_context_mgr_node;
 			if (target_node == NULL) {
 				return_error = BR_DEAD_REPLY;
@@ -1394,6 +1395,7 @@ static void binder_transaction(struct binder_proc *proc,
 			}
 		}
 		e->to_node = target_node->debug_id;
+		//注册服务：a.service manager 目标进程
 		target_proc = target_node->proc;
 		if (target_proc == NULL) {
 			return_error = BR_DEAD_REPLY;
@@ -1423,6 +1425,7 @@ static void binder_transaction(struct binder_proc *proc,
 			}
 		}
 	}
+	//目标进程 todo 链表
 	if (target_thread) {
 		e->to_thread = target_thread->pid;
 		target_list = &target_thread->todo;
@@ -1481,6 +1484,7 @@ static void binder_transaction(struct binder_proc *proc,
 
 	trace_binder_transaction(reply, t, target_node);
 
+	//在目标进程mmap的内核中分配空间，并复制传输的数据过去
 	t->buffer = binder_alloc_buf(target_proc, tr->data_size,
 		tr->offsets_size, !reply && (t->flags & TF_ONE_WAY));
 	if (t->buffer == NULL) {
@@ -1498,6 +1502,7 @@ static void binder_transaction(struct binder_proc *proc,
 	offp = (binder_size_t *)(t->buffer->data +
 				 ALIGN(tr->data_size, sizeof(void *)));
 
+	//注册服务：b.复制传输的数据到目标进程mmap的内核空间
 	if (copy_from_user(t->buffer->data, (const void __user *)(uintptr_t)
 			   tr->data.ptr.buffer, tr->data_size)) {
 		binder_user_error("%d:%d got transaction with invalid data ptr\n",
@@ -1520,6 +1525,7 @@ static void binder_transaction(struct binder_proc *proc,
 	}
 	off_end = (void *)offp + tr->offsets_size;
 	off_min = 0;
+	//通过offset 逐个处理flat_binder_object start
 	for (; offp < off_end; offp++) {
 		struct flat_binder_object *fp;
 
@@ -1535,6 +1541,21 @@ static void binder_transaction(struct binder_proc *proc,
 			return_error = BR_FAILED_REPLY;
 			goto err_bad_offset;
 		}
+		//TODO 注册服务：c.处理传输的flat_binder_object
+		/*
+		1.构造binder_node给test server
+		2.构造binder_red给service manager
+		3.增加引用计数
+		struct flat_binder_object {
+ 			__u32 type; 实体/引用
+ 			__u32 flags;
+ 			union {
+ 				binder_uintptr_t binder; 实体: 服务提供方的函数处理指针 hello_service_handler
+ 				__u32 handle;
+ 				};
+ 		binder_uintptr_t cookie;
+		};
+		*/
 		fp = (struct flat_binder_object *)(t->buffer->data + *offp);
 		off_min = *offp + sizeof(struct flat_binder_object);
 		switch (fp->type) {
@@ -1544,6 +1565,8 @@ static void binder_transaction(struct binder_proc *proc,
 			struct binder_node *node = binder_get_node(proc, fp->binder);
 
 			if (node == NULL) {
+				//注册服务：
+				//注册服务：为当前进程test_server binder_proc 创建节点node 对应hello 服务
 				node = binder_new_node(proc, fp->binder, fp->cookie);
 				if (node == NULL) {
 					return_error = BR_FAILED_REPLY;
@@ -1564,16 +1587,19 @@ static void binder_transaction(struct binder_proc *proc,
 				return_error = BR_FAILED_REPLY;
 				goto err_binder_get_ref_for_node_failed;
 			}
+			//注册服务：为目标进程 service manager 创建引用 ref
 			ref = binder_get_ref_for_node(target_proc, node);
 			if (ref == NULL) {
 				return_error = BR_FAILED_REPLY;
 				goto err_binder_get_ref_for_node_failed;
 			}
+			//type handle 数据修改 此时在目进程空间中，所以要修改binder 实体为引用，handle 为引用号
 			if (fp->type == BINDER_TYPE_BINDER)
 				fp->type = BINDER_TYPE_HANDLE;
 			else
 				fp->type = BINDER_TYPE_WEAK_HANDLE;
 			fp->handle = ref->desc;
+			//修改引用计数 会返回一些信息给当前进程(test_server)
 			binder_inc_ref(ref, fp->type == BINDER_TYPE_HANDLE,
 				       &thread->todo);
 
@@ -1681,6 +1707,7 @@ static void binder_transaction(struct binder_proc *proc,
 			goto err_bad_object_type;
 		}
 	}
+	//通过offset 逐个处理flat_binder_object end
 	if (reply) {
 		BUG_ON(t->buffer->async_transaction != 0);
 		binder_pop_transaction(target_thread, in_reply_to);
@@ -1698,6 +1725,7 @@ static void binder_transaction(struct binder_proc *proc,
 		} else
 			target_node->has_async_transaction = 1;
 	}
+	//注册服务：d.加入到目标进程的todo链表 并唤醒
 	t->work.type = BINDER_WORK_TRANSACTION;
 	list_add_tail(&t->work.entry, target_list);
 	tcomplete->type = BINDER_WORK_TRANSACTION_COMPLETE;
@@ -2225,6 +2253,7 @@ retry:
 		struct binder_work *w;
 		struct binder_transaction *t = NULL;
 
+		//注册服务：从todo链表中取出数据
 		if (!list_empty(&thread->todo)) {
 			w = list_first_entry(&thread->todo, struct binder_work,
 					     entry);
