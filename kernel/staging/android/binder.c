@@ -1611,6 +1611,7 @@ static void binder_transaction(struct binder_proc *proc,
 		} break;
 		case BINDER_TYPE_HANDLE:
 		case BINDER_TYPE_WEAK_HANDLE: {
+			//获取服务：svmgr 从用户态根据 "hello" 获取到自己进程中对这个node的binder_ref 
 			struct binder_ref *ref = binder_get_ref(proc, fp->handle);
 
 			if (ref == NULL) {
@@ -1624,6 +1625,8 @@ static void binder_transaction(struct binder_proc *proc,
 				return_error = BR_FAILED_REPLY;
 				goto err_binder_get_ref_failed;
 			}
+			//获取服务：svmgr 从用户态根据 "hello" 获取到自己进程中对这个node的binder_ref 
+			//这个node的所属进程是test server 此时target_proc是 test client进程 所以走else 分支
 			if (ref->node->proc == target_proc) {
 				if (fp->type == BINDER_TYPE_HANDLE)
 					fp->type = BINDER_TYPE_BINDER;
@@ -1639,7 +1642,8 @@ static void binder_transaction(struct binder_proc *proc,
 					     (u64)ref->node->ptr);
 			} else {
 				struct binder_ref *new_ref;
-
+				//获取服务：为test client进程创建 hello 服务node 的binder_ref 并返回引用号 binder_ref.desc 
+				//将数据方式test client todo链表并唤醒
 				new_ref = binder_get_ref_for_node(target_proc, ref->node);
 				if (new_ref == NULL) {
 					return_error = BR_FAILED_REPLY;
@@ -1960,7 +1964,7 @@ static int binder_thread_write(struct binder_proc *proc,
 		case BC_TRANSACTION:
 		case BC_REPLY: {
 			struct binder_transaction_data tr;
-
+			
 			if (copy_from_user(&tr, ptr, sizeof(tr)))
 				return -EFAULT;
 			ptr += sizeof(tr);
@@ -2872,6 +2876,13 @@ static struct vm_operations_struct binder_vm_ops = {
 
 static int binder_mmap(struct file *filp, struct vm_area_struct *vma)
 {
+	/*
+	vm_struct用來描述內核的一個連續的虛擬空間，注意與struct vm_area_struct的區別
+	struct vm_area_struct也是一個連續的虛擬內存空間,不過是描述用戶空間的
+	struct vm_struct表示的地址空間範圍是(3G + 896M + 8M) ~ 4G
+	struct vm_area_struct表示的地址空間範圍是0~3G    
+	*/
+
 	int ret;
 	struct vm_struct *area;
 	struct binder_proc *proc = filp->private_data;
@@ -2976,6 +2987,7 @@ static int binder_open(struct inode *nodp, struct file *filp)
 	binder_debug(BINDER_DEBUG_OPEN_CLOSE, "binder_open: %d:%d\n",
 		     current->group_leader->pid, current->pid);
 
+	//为proc 分配kernel 内存
 	proc = kzalloc(sizeof(*proc), GFP_KERNEL);
 	if (proc == NULL)
 		return -ENOMEM;
@@ -2991,6 +3003,7 @@ static int binder_open(struct inode *nodp, struct file *filp)
 	hlist_add_head(&proc->proc_node, &binder_procs);
 	proc->pid = current->group_leader->pid;
 	INIT_LIST_HEAD(&proc->delivered_death);
+	//file文件指针的private_data变量指向binder_proc数据
 	filp->private_data = proc;
 
 	binder_unlock(__func__);
